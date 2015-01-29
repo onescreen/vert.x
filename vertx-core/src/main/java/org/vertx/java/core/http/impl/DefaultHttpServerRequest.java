@@ -145,7 +145,7 @@ public class DefaultHttpServerRequest implements HttpServerRequest {
   @Override
   public MultiMap params() {
     if (params == null) {
-      QueryStringDecoder queryStringDecoder = new QueryStringDecoder(uri());
+      SafeQueryStringDecoder queryStringDecoder = new SafeQueryStringDecoder(uri());
       Map<String, List<String>> prms = queryStringDecoder.parameters();
       params = new CaseInsensitiveMultiMap();
       if (!prms.isEmpty()) {

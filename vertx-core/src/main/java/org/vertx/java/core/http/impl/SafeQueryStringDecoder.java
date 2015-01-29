@@ -61,9 +61,10 @@ import java.util.Map;
  *
  * @see QueryStringEncoder
  */
-public class QueryStringDecoder {
+public class SafeQueryStringDecoder {
 
     private static final int DEFAULT_MAX_PARAMS = 1024;
+	  private static final String BAD_PREFIX = "bad_encoding-";
 
     private final Charset charset;
     private final String uri;
@@ -77,7 +78,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI. The decoder will
      * assume that the query string is encoded in UTF-8.
      */
-    public QueryStringDecoder(String uri) {
+    public SafeQueryStringDecoder(String uri) {
         this(uri, HttpConstants.DEFAULT_CHARSET);
     }
 
@@ -85,7 +86,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI encoded in the
      * specified charset.
      */
-    public QueryStringDecoder(String uri, boolean hasPath) {
+    public SafeQueryStringDecoder(String uri, boolean hasPath) {
         this(uri, HttpConstants.DEFAULT_CHARSET, hasPath);
     }
 
@@ -93,7 +94,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI encoded in the
      * specified charset.
      */
-    public QueryStringDecoder(String uri, Charset charset) {
+    public SafeQueryStringDecoder(String uri, Charset charset) {
         this(uri, charset, true);
     }
 
@@ -101,7 +102,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI encoded in the
      * specified charset.
      */
-    public QueryStringDecoder(String uri, Charset charset, boolean hasPath) {
+    public SafeQueryStringDecoder(String uri, Charset charset, boolean hasPath) {
         this(uri, charset, hasPath, DEFAULT_MAX_PARAMS);
     }
 
@@ -109,7 +110,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI encoded in the
      * specified charset.
      */
-    public QueryStringDecoder(String uri, Charset charset, boolean hasPath, int maxParams) {
+    public SafeQueryStringDecoder(String uri, Charset charset, boolean hasPath, int maxParams) {
         if (uri == null) {
             throw new NullPointerException("getUri");
         }
@@ -131,7 +132,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI. The decoder will
      * assume that the query string is encoded in UTF-8.
      */
-    public QueryStringDecoder(URI uri) {
+    public SafeQueryStringDecoder(URI uri) {
         this(uri, HttpConstants.DEFAULT_CHARSET);
     }
 
@@ -139,7 +140,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI encoded in the
      * specified charset.
      */
-    public QueryStringDecoder(URI uri, Charset charset) {
+    public SafeQueryStringDecoder(URI uri, Charset charset) {
         this(uri, charset, DEFAULT_MAX_PARAMS);
     }
 
@@ -147,7 +148,7 @@ public class QueryStringDecoder {
      * Creates a new decoder that decodes the specified URI encoded in the
      * specified charset.
      */
-    public QueryStringDecoder(URI uri, Charset charset, int maxParams) {
+    public SafeQueryStringDecoder(URI uri, Charset charset, int maxParams) {
         if (uri == null) {
             throw new NullPointerException("getUri");
         }
@@ -227,11 +228,18 @@ public class QueryStringDecoder {
         int pos = 0; // Beginning of the unprocessed region
         int i;       // End of the unprocessed region
         char c;  // Current character
+        
+
         for (i = 0; i < s.length(); i++) {
             c = s.charAt(i);
             if (c == '=' && name == null) {
                 if (pos != i) {
-                    name = decodeComponent(s.substring(pos, i), charset);
+	                String substr = s.substring(pos,i);
+	                try {
+		                name = decodeComponent(substr, charset);
+	                } catch (java.lang.IllegalArgumentException e) {
+		                name = BAD_PREFIX + substr;
+	                }
                 }
                 pos = i + 1;
             // http://www.w3.org/TR/html401/appendix/notes.html#h-B.2.2
@@ -240,11 +248,28 @@ public class QueryStringDecoder {
                     // We haven't seen an `=' so far but moved forward.
                     // Must be a param of the form '&a&' so add it with
                     // an empty value.
-                    if (!addParam(params, decodeComponent(s.substring(pos, i), charset), "")) {
-                        return;
-                    }
+	                String substr = s.substring(pos, i);
+	                String singleName = null;
+	                try {
+		                singleName = decodeComponent(substr, charset);
+	                } catch (java.lang.IllegalArgumentException e) {
+		                singleName = BAD_PREFIX + substr;
+	                }
+	                if (!addParam(params, singleName, "")) {
+		                return;
+	                }
                 } else if (name != null) {
-                    if (!addParam(params, name, decodeComponent(s.substring(pos, i), charset))) {
+		                String value = null;
+		                String substr = s.substring(pos, i);
+		                try {
+			                value = decodeComponent(substr, charset);
+		                } catch (java.lang.IllegalArgumentException e) {
+			                value = substr;
+			                if (name != null && !name.startsWith(BAD_PREFIX)) {
+				                name = BAD_PREFIX + name;
+			                }
+		                }
+                    if (!addParam(params, name, value)) {
                         return;
                     }
                     name = null;
@@ -252,7 +277,33 @@ public class QueryStringDecoder {
                 pos = i + 1;
             }
         }
-
+        
+        if (pos != i) {  // Are there characters we haven't dealt with?
+	        String substr = s.substring(pos, i);
+            if (name == null) {     // Yes and we haven't seen any `='.
+	            String singleName = null;
+	            try {
+		            singleName = decodeComponent(substr, charset);
+	            } catch (java.lang.IllegalArgumentException e) {
+		            singleName = BAD_PREFIX + substr;
+	            }
+	            addParam(params, singleName, "");
+            } else {                // Yes and this must be the last value.
+	            String value = null;
+	            try {
+		            value = decodeComponent(substr, charset);
+	            } catch (java.lang.IllegalArgumentException e) {
+		            value = substr;
+		            if (!name.startsWith(BAD_PREFIX)) {
+			            name = BAD_PREFIX + name;
+		            }
+	            }
+	            addParam(params, name, value);
+            }
+        } else if (name != null) {  // Have we seen a name without value?
+            addParam(params, name, "");
+        } 
+        /*
         if (pos != i) {  // Are there characters we haven't dealt with?
             if (name == null) {     // Yes and we haven't seen any `='.
                 addParam(params, decodeComponent(s.substring(pos, i), charset), "");
@@ -261,7 +312,7 @@ public class QueryStringDecoder {
             }
         } else if (name != null) {  // Have we seen a name without value?
             addParam(params, name, "");
-        }
+            }*/
     }
 
     private boolean addParam(Map<String, List<String>> params, String name, String value) {
